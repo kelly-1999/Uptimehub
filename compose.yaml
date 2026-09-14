@@ -1,6 +1,30 @@
 services:
+  redis:
+    image: redis:8-alpine
+
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+
+    volumes:
+      - redis_data:/data
+
+    healthcheck:
+      test:
+        - CMD
+        - redis-cli
+        - ping
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+    restart: unless-stopped
+
+
   postgres:
     image: postgres:17
+
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -20,6 +44,7 @@ services:
       retries: 10
 
     restart: unless-stopped
+
 
   migrate:
     build:
@@ -43,6 +68,7 @@ services:
       postgres:
         condition: service_healthy
 
+
   backend:
     build:
       context: ./application/backend
@@ -55,11 +81,15 @@ services:
       ENVIRONMENT: ${ENVIRONMENT}
       DEBUG: ${DEBUG}
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
 
     ports:
       - "8000:8000"
 
     depends_on:
+      redis:
+        condition: service_healthy
+
       postgres:
         condition: service_healthy
 
@@ -67,6 +97,39 @@ services:
         condition: service_completed_successfully
 
     restart: unless-stopped
+
+
+  scheduler:
+    build:
+      context: ./application/backend
+
+    image: uptimehub-backend:dev
+
+    environment:
+      APP_NAME: ${APP_NAME}
+      APP_VERSION: ${APP_VERSION}
+      ENVIRONMENT: ${ENVIRONMENT}
+      DEBUG: ${DEBUG}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+
+    command:
+      - python
+      - -m
+      - app.services.monitor_scheduler
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+      redis:
+        condition: service_healthy
+
+      migrate:
+        condition: service_completed_successfully
+
+    restart: unless-stopped
+
 
   worker:
     build:
@@ -80,6 +143,7 @@ services:
       ENVIRONMENT: ${ENVIRONMENT}
       DEBUG: ${DEBUG}
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
 
     command:
       - python
@@ -87,6 +151,9 @@ services:
       - app.services.monitor_worker
 
     depends_on:
+      redis:
+        condition: service_healthy
+
       postgres:
         condition: service_healthy
 
@@ -95,5 +162,7 @@ services:
 
     restart: unless-stopped
 
+
 volumes:
   postgres_data:
+  redis_data:

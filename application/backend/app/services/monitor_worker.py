@@ -1,101 +1,74 @@
-import time
-from datetime import UTC, datetime, timedelta
-
-from sqlalchemy import select
-
 from app.core.database import SessionLocal
 from app.models.monitor import Monitor
+from app.services.job_queue import get_monitor_check_job
 from app.services.monitor_checker import check_monitor
 
 
-POLL_INTERVAL_SECONDS = 5
-
-
-def monitor_is_due(monitor: Monitor, now: datetime) -> bool:
-    """
-    Determine whether a monitor should be checked.
-
-    A monitor is due when:
-    - it has never been checked, or
-    - enough time has passed since its previous check.
-    """
-
-    if monitor.last_checked_at is None:
-        return True
-
-    next_check_time = monitor.last_checked_at + timedelta(
-        seconds=monitor.interval_seconds
-    )
-
-    return now >= next_check_time
-
-
-def run_check_cycle() -> None:
-    """
-    Load active monitors from PostgreSQL and check
-    any monitors whose interval has expired.
-    """
-
-    now = datetime.now(UTC)
-
+def process_monitor_job(monitor_id: int) -> None:
     with SessionLocal() as db:
-        statement = (
-            select(Monitor)
-            .where(Monitor.is_active.is_(True))
-            .order_by(Monitor.id)
-        )
+        monitor = db.get(Monitor, monitor_id)
 
-        monitors = db.scalars(statement).all()
-
-        if not monitors:
-            print("[WORKER] No active monitors found.")
+        if monitor is None:
+            print(
+                f"[WORKER] Monitor id={monitor_id} "
+                f"does not exist."
+            )
             return
 
-        for monitor in monitors:
-            if not monitor_is_due(monitor, now):
-                continue
+        if not monitor.is_active:
+            print(
+                f"[WORKER] Monitor id={monitor_id} "
+                f"is inactive. Skipping."
+            )
+            return
+
+        print(
+            f"[WORKER] Checking monitor "
+            f"id={monitor.id} "
+            f"name={monitor.name} "
+            f"url={monitor.url}"
+        )
+
+        try:
+            check_monitor(monitor)
+
+            db.commit()
+            db.refresh(monitor)
 
             print(
-                f"[WORKER] Checking monitor "
+                f"[WORKER] Result "
                 f"id={monitor.id} "
-                f"name={monitor.name} "
-                f"url={monitor.url}"
+                f"status={monitor.current_status} "
+                f"http={monitor.last_http_status} "
+                f"response_time={monitor.last_response_time_ms}ms"
             )
 
-            try:
-                check_monitor(monitor)
+        except Exception as exc:
+            db.rollback()
 
-                db.commit()
-                db.refresh(monitor)
-
-                print(
-                    f"[WORKER] Result "
-                    f"id={monitor.id} "
-                    f"status={monitor.current_status} "
-                    f"http={monitor.last_http_status} "
-                    f"response_time={monitor.last_response_time_ms}ms"
-                )
-
-            except Exception as exc:
-                db.rollback()
-
-                print(
-                    f"[WORKER] Error checking "
-                    f"monitor id={monitor.id}: {exc}"
-                )
+            print(
+                f"[WORKER] Error processing "
+                f"monitor id={monitor_id}: {exc}"
+            )
 
 
 def main() -> None:
-    print("[WORKER] UptimeHub monitoring worker started.")
-    print(
-        f"[WORKER] Polling database every "
-        f"{POLL_INTERVAL_SECONDS} seconds."
-    )
+    print("[WORKER] UptimeHub queue worker started.")
 
     try:
         while True:
-            run_check_cycle()
-            time.sleep(POLL_INTERVAL_SECONDS)
+            job = get_monitor_check_job()
+
+            if job is None:
+                continue
+
+            monitor_id = job.get("monitor_id")
+
+            if monitor_id is None:
+                print("[WORKER] Invalid job received.")
+                continue
+
+            process_monitor_job(monitor_id)
 
     except KeyboardInterrupt:
         print("\n[WORKER] Worker stopped.")
