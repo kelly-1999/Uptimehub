@@ -1,0 +1,89 @@
+groups:
+  - name: uptimehub-alerts
+
+    rules:
+      - alert: UptimeHubTargetDown
+        expr: up{job=~"uptimehub-.*"} == 0
+        for: 30s
+
+        labels:
+          severity: critical
+
+        annotations:
+          summary: "UptimeHub Prometheus target is down"
+          description: "Prometheus cannot scrape {{ $labels.job }} at {{ $labels.instance }}."
+
+
+      - alert: UptimeHubHighAPIErrorRate
+        expr: |
+          (
+            sum(
+              rate(
+                uptimehub_http_requests_total{
+                  status_code=~"5.."
+                }[5m]
+              )
+            )
+            /
+            sum(
+              rate(
+                uptimehub_http_requests_total[5m]
+              )
+            )
+          ) > 0.05
+        for: 2m
+
+        labels:
+          severity: warning
+
+        annotations:
+          summary: "High API error rate"
+          description: "More than 5% of UptimeHub API requests are returning HTTP 5xx responses."
+
+
+      - alert: UptimeHubWorkerFailures
+        expr: |
+          increase(
+            uptimehub_monitor_check_failures_total[5m]
+          ) > 0
+        for: 1m
+
+        labels:
+          severity: warning
+
+        annotations:
+          summary: "UptimeHub worker failures detected"
+          description: "The monitoring worker has recorded internal processing failures in the last 5 minutes."
+
+
+      - alert: UptimeHubHighMonitorResponseTime
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(
+              rate(
+                uptimehub_monitor_response_time_seconds_bucket[5m]
+              )
+            ) by (le)
+          ) > 2
+        for: 5m
+
+        labels:
+          severity: warning
+
+        annotations:
+          summary: "Monitored websites are responding slowly"
+          description: "The P95 monitor response time has exceeded 2 seconds for 5 minutes."
+
+
+      - alert: UptimeHubQueueBacklog
+        expr: |
+          max(uptimehub_monitor_queue_size) > 20
+        for: 2m
+
+        labels:
+          severity: warning
+
+        annotations:
+          summary: "UptimeHub monitor queue backlog"
+          description: "More than 20 monitor jobs have been waiting in Redis for at least 2 minutes."

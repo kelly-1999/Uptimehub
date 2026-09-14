@@ -1,5 +1,7 @@
 import json
 
+from redis.exceptions import TimeoutError as RedisTimeoutError
+
 from app.core.redis import redis_client
 
 
@@ -43,10 +45,13 @@ def enqueue_monitor_check(monitor_id: int) -> None:
 
 
 def get_monitor_check_job(timeout: int = 5) -> dict | None:
-    result = redis_client.brpop(
-        MONITOR_QUEUE,
-        timeout=timeout,
-    )
+    try:
+        result = redis_client.brpop(
+            MONITOR_QUEUE,
+            timeout=timeout,
+        )
+    except RedisTimeoutError:
+        return None
 
     if result is None:
         return None
