@@ -163,12 +163,14 @@ stages:
                   worker="$IMAGE" \
                   -n uptimehub-dev
 
-                kubectl set image \
-                  job/uptimehub-db-migration \
-                  migration="$IMAGE" \
+                kubectl delete job uptimehub-db-migration \
                   -n uptimehub-dev \
-                  --local \
-                  -o yaml | kubectl replace --force -f -
+                  --ignore-not-found=true
+
+                sed \
+                  "s|image: .*uptimehub-backend:.*|image: $IMAGE|" \
+                  kubernetes/base/migration-job.yaml \
+                  | kubectl apply -f -
 
                 kubectl wait \
                   --for=condition=complete \
