@@ -13,6 +13,7 @@ output "acr_name" {
 output "acr_login_server" {
   value = module.acr.login_server
 }
+
 output "aks_name" {
   value = module.aks.name
 }
@@ -44,9 +45,11 @@ output "redis_hostname" {
 output "redis_port" {
   value = module.redis.port
 }
+
 output "aks_oidc_issuer_url" {
   value = module.aks.oidc_issuer_url
 }
+
 output "key_vault_name" {
   value = module.keyvault.key_vault_name
 }
@@ -61,8 +64,4 @@ output "appgateway_public_ip" {
 
 output "appgateway_name" {
   value = module.appgateway.name
-}
-
-output "agic_client_id" {
-  value = azurerm_user_assigned_identity.agic.client_id
 }
