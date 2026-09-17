@@ -207,31 +207,19 @@ stages:
     displayName: 'UptimeHub Health Check'
 
     steps:
+    - script: |
+        set -euo pipefail
 
-    - task: AzureCLI@2
+        echo "Testing UptimeHub through Application Gateway..."
+
+        curl \
+          --fail \
+          --show-error \
+          --retry 6 \
+          --retry-delay 10 \
+          --retry-all-errors \
+          "http://$(APPGW_PUBLIC_IP)/health"
+
+        echo
+        echo "UptimeHub smoke test passed."
       displayName: 'Test Application Gateway endpoint'
-      inputs:
-        azureSubscription: '$(azureServiceConnection)'
-        scriptType: bash
-        scriptLocation: inlineScript
-        inlineScript: |
-          set -euo pipefail
-
-          PUBLIC_IP=$(az network public-ip list \
-            --resource-group "$(resourceGroup)" \
-            --query "[?contains(name, 'agw-uptimehub-dev')].ipAddress | [0]" \
-            --output tsv)
-
-          test -n "$PUBLIC_IP"
-
-          echo "Testing UptimeHub health endpoint..."
-
-          curl \
-            --fail \
-            --show-error \
-            --retry 5 \
-            --retry-delay 10 \
-            "http://$PUBLIC_IP/health"
-
-          echo
-          echo "UptimeHub smoke test passed."
