@@ -34,7 +34,7 @@ pool:
 
 
 # =========================================================
-# 1. TERRAFORM CHECKS
+# 1. TERRAFORM VALIDATE
 # =========================================================
 stages:
 
@@ -70,6 +70,7 @@ stages:
 
     - task: AzureCLI@2
       displayName: 'Terraform Init and Validate'
+
       inputs:
         azureSubscription: '$(azureServiceConnection)'
         scriptType: bash
@@ -90,6 +91,7 @@ stages:
             -input=false
 
           terraform validate
+
         workingDirectory: '$(terraformDirectory)'
 
 
@@ -120,10 +122,16 @@ stages:
         unzip -q terraform.zip
 
         sudo install terraform /usr/local/bin/terraform
+
+        terraform version
       displayName: 'Install Terraform'
 
     - task: AzureCLI@2
       displayName: 'Create Terraform Plan'
+
+      env:
+        TF_VAR_postgresql_admin_password: $(TF_VAR_postgresql_admin_password)
+
       inputs:
         azureSubscription: '$(azureServiceConnection)'
         scriptType: bash
@@ -146,10 +154,12 @@ stages:
           terraform plan \
             -input=false \
             -out="$(terraformPlan)"
+
         workingDirectory: '$(terraformDirectory)'
 
     - task: PublishPipelineArtifact@1
       displayName: 'Publish Terraform Plan'
+
       inputs:
         targetPath: '$(terraformDirectory)/$(terraformPlan)'
         artifact: 'terraform-plan'
@@ -179,6 +189,7 @@ stages:
 
           - task: DownloadPipelineArtifact@2
             displayName: 'Download Terraform Plan'
+
             inputs:
               artifact: 'terraform-plan'
               path: '$(Pipeline.Workspace)/terraform-plan'
@@ -194,10 +205,16 @@ stages:
               unzip -q terraform.zip
 
               sudo install terraform /usr/local/bin/terraform
+
+              terraform version
             displayName: 'Install Terraform'
 
           - task: AzureCLI@2
             displayName: 'Apply Terraform Plan'
+
+            env:
+              TF_VAR_postgresql_admin_password: $(TF_VAR_postgresql_admin_password)
+
             inputs:
               azureSubscription: '$(azureServiceConnection)'
               scriptType: bash
