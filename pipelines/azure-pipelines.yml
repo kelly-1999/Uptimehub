@@ -19,18 +19,19 @@ variables:
 pool:
   vmImage: 'ubuntu-latest'
 
-stages:
 
 # =========================================================
 # 1. TEST
 # =========================================================
+stages:
 - stage: Test
   displayName: 'Test UptimeHub'
+
   jobs:
   - job: BackendTests
     displayName: 'Backend Tests'
-    steps:
 
+    steps:
     - task: UsePythonVersion@0
       inputs:
         versionSpec: '3.14'
@@ -53,6 +54,7 @@ stages:
         ENVIRONMENT: 'test'
         DEBUG: 'false'
 
+
 # =========================================================
 # 2. BUILD + PUSH
 # =========================================================
@@ -64,8 +66,8 @@ stages:
   jobs:
   - job: DockerBuild
     displayName: 'Docker Build and Push'
-    steps:
 
+    steps:
     - task: AzureCLI@2
       displayName: 'Build and push image to ACR'
       inputs:
@@ -85,25 +87,27 @@ stages:
             --query loginServer \
             --output tsv)
 
+          IMAGE="$ACR_LOGIN_SERVER/$(imageRepository):$(imageTag)"
+
           echo "Building image:"
-          echo "$ACR_LOGIN_SERVER/$(imageRepository):$(imageTag)"
+          echo "$IMAGE"
 
           az acr login --name "$ACR_NAME"
 
           docker build \
-            -t "$ACR_LOGIN_SERVER/$(imageRepository):$(imageTag)" \
+            -t "$IMAGE" \
             -f "$(dockerfilePath)" \
             application/backend
 
-          docker push \
-            "$ACR_LOGIN_SERVER/$(imageRepository):$(imageTag)"
+          docker push "$IMAGE"
 
           echo "##vso[task.setvariable variable=acrLoginServer;isOutput=true]$ACR_LOGIN_SERVER"
+
       name: buildImage
 
 
 # =========================================================
-# 3. DEPLOY
+# 3. DEPLOY TO AKS
 # =========================================================
 - stage: Deploy
   displayName: 'Deploy to AKS'
@@ -121,8 +125,8 @@ stages:
     strategy:
       runOnce:
         deploy:
-          steps:
 
+          steps:
           - checkout: self
 
           - task: AzureCLI@2
@@ -131,9 +135,13 @@ stages:
               azureSubscription: '$(azureServiceConnection)'
               scriptType: bash
               scriptLocation: inlineScript
+
               inlineScript: |
                 set -euo pipefail
 
+                # -------------------------------------------------
+                # Connect pipeline to AKS
+                # -------------------------------------------------
                 az aks install-cli
 
                 az aks get-credentials \
@@ -146,8 +154,27 @@ stages:
                 echo "Deploying:"
                 echo "$IMAGE"
 
+
+                # -------------------------------------------------
+                # Delete previous migration Job
+                #
+                # Kubernetes Job pod templates are immutable.
+                # -------------------------------------------------
+                kubectl delete job uptimehub-db-migration \
+                  -n uptimehub-dev \
+                  --ignore-not-found=true \
+                  --wait=true
+
+
+                # -------------------------------------------------
+                # Apply Kubernetes configuration
+                # -------------------------------------------------
                 kubectl apply -k kubernetes/base/
 
+
+                # -------------------------------------------------
+                # Deploy the new application image
+                # -------------------------------------------------
                 kubectl set image \
                   deployment/uptimehub-backend \
                   backend="$IMAGE" \
@@ -163,14 +190,25 @@ stages:
                   worker="$IMAGE" \
                   -n uptimehub-dev
 
+
+                # -------------------------------------------------
+                # Recreate migration using THIS pipeline image
+                # -------------------------------------------------
                 kubectl delete job uptimehub-db-migration \
                   -n uptimehub-dev \
-                  --ignore-not-found=true
+                  --ignore-not-found=true \
+                  --wait=true
 
                 sed \
                   "s|image: .*uptimehub-backend:.*|image: $IMAGE|" \
                   kubernetes/base/migration-job.yaml \
                   | kubectl apply -f -
+
+
+                # -------------------------------------------------
+                # Wait for database migration
+                # -------------------------------------------------
+                echo "Waiting for database migration..."
 
                 kubectl wait \
                   --for=condition=complete \
@@ -178,20 +216,34 @@ stages:
                   -n uptimehub-dev \
                   --timeout=180s
 
+                echo "Database migration completed."
+
+
+                # -------------------------------------------------
+                # Wait for application rollouts
+                # -------------------------------------------------
+                echo "Waiting for backend rollout..."
+
                 kubectl rollout status \
                   deployment/uptimehub-backend \
                   -n uptimehub-dev \
                   --timeout=300s
+
+                echo "Waiting for scheduler rollout..."
 
                 kubectl rollout status \
                   deployment/uptimehub-scheduler \
                   -n uptimehub-dev \
                   --timeout=300s
 
+                echo "Waiting for worker rollout..."
+
                 kubectl rollout status \
                   deployment/uptimehub-worker \
                   -n uptimehub-dev \
                   --timeout=300s
+
+                echo "AKS deployment completed successfully."
 
 
 # =========================================================
@@ -222,4 +274,5 @@ stages:
 
         echo
         echo "UptimeHub smoke test passed."
-      displayName: 'Test Application Gateway endpoint'
+
+
