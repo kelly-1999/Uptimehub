@@ -9,7 +9,6 @@ resource "azurerm_resource_group" "tfstate" {
   location = "polandcentral"
 }
 
-# trivy:ignore:AZU-0012
 # DEV EXCEPTION:
 # Terraform state is accessed by Microsoft-hosted Azure DevOps agents whose
 # outbound IP addresses are not fixed for this project.

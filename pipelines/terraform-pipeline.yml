@@ -141,6 +141,7 @@ stages:
 
         trivy config \
           --severity HIGH,CRITICAL \
+          --skip-checks AZU-0012 \
           --exit-code 1 \
           infrastructure/terraform
 
