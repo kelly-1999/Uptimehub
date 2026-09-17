@@ -9,6 +9,15 @@ resource "azurerm_resource_group" "tfstate" {
   location = "polandcentral"
 }
 
+# trivy:ignore:AZU-0012
+# DEV EXCEPTION:
+# Terraform state is accessed by Microsoft-hosted Azure DevOps agents whose
+# outbound IP addresses are not fixed for this project.
+# Authentication and authorization are enforced through Azure AD/RBAC.
+# The state container is private, TLS 1.2+ is required, and blob versioning
+# is enabled.
+# Production hardening: move state access to a private endpoint with an
+# appropriately networked agent before enforcing default_action = "Deny".
 resource "azurerm_storage_account" "tfstate" {
   name                     = "uptimehubtf${random_string.suffix.result}"
   resource_group_name      = azurerm_resource_group.tfstate.name
