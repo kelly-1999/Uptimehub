@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: uptimehub-config
+  namespace: uptimehub-dev
+data:
+  APP_NAME: "UptimeHub API"
+  APP_VERSION: "0.1.0"
+  ENVIRONMENT: "dev"
+  DEBUG: "false"
