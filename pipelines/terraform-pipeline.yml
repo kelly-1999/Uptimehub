@@ -64,6 +64,8 @@ stages:
       displayName: 'Install Terraform'
 
     - script: |
+        set -euo pipefail
+
         terraform fmt -check -recursive
       workingDirectory: 'infrastructure/terraform'
       displayName: 'Terraform Format Check'
@@ -96,12 +98,63 @@ stages:
 
 
 # =========================================================
-# 2. TERRAFORM PLAN
+# 2. TERRAFORM SECURITY SCAN
+# =========================================================
+
+- stage: Security
+  displayName: 'Terraform Security Scan'
+  dependsOn: Validate
+  condition: succeeded()
+
+  jobs:
+  - job: TerraformSecurity
+    displayName: 'Scan Terraform Configuration'
+
+    steps:
+    - checkout: self
+
+    - script: |
+        set -euo pipefail
+
+        echo "Installing Trivy..."
+
+        sudo apt-get update
+        sudo apt-get install -y wget gnupg lsb-release
+
+        wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key \
+          | gpg --dearmor \
+          | sudo tee /usr/share/keyrings/trivy.gpg > /dev/null
+
+        echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb generic main" \
+          | sudo tee /etc/apt/sources.list.d/trivy.list
+
+        sudo apt-get update
+        sudo apt-get install -y trivy
+
+        trivy --version
+      displayName: 'Install Trivy'
+
+    - script: |
+        set -euo pipefail
+
+        echo "Scanning Terraform configuration for HIGH and CRITICAL security issues..."
+
+        trivy config \
+          --severity HIGH,CRITICAL \
+          --exit-code 1 \
+          infrastructure/terraform
+
+        echo "Terraform security scan passed."
+      displayName: 'Scan Terraform IaC'
+
+
+# =========================================================
+# 3. TERRAFORM PLAN
 # =========================================================
 
 - stage: Plan
   displayName: 'Terraform Plan'
-  dependsOn: Validate
+  dependsOn: Security
   condition: succeeded()
 
   jobs:
@@ -166,7 +219,7 @@ stages:
 
 
 # =========================================================
-# 3. APPROVAL + TERRAFORM APPLY
+# 4. APPROVAL + TERRAFORM APPLY
 # =========================================================
 
 - stage: Apply
