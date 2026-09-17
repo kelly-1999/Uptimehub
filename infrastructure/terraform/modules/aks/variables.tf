@@ -23,6 +23,11 @@ variable "acr_id" {
   type        = string
 }
 
+variable "application_gateway_id" {
+  description = "ID of the existing Application Gateway used by the AKS ingress controller"
+  type        = string
+}
+
 variable "node_count" {
   description = "Initial number of AKS nodes"
   type        = number

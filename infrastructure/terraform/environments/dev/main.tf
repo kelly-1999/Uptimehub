@@ -10,11 +10,6 @@ resource "azurerm_resource_group" "uptimehub" {
 }
 
 module "networking" {
-
-  postgresql_subnet_prefixes = [
-    "10.10.18.0/24"
-  ]
-
   source = "../../modules/networking"
 
   resource_group_name = azurerm_resource_group.uptimehub.name
@@ -35,6 +30,10 @@ module "networking" {
 
   private_endpoints_subnet_prefixes = [
     "10.10.17.0/24"
+  ]
+
+  postgresql_subnet_prefixes = [
+    "10.10.18.0/24"
   ]
 }
 
@@ -58,7 +57,6 @@ resource "azurerm_private_dns_zone_virtual_network_link" "postgresql" {
   registration_enabled = false
 }
 
-
 resource "random_string" "acr_suffix" {
   length  = 6
   special = false
@@ -75,6 +73,17 @@ module "acr" {
   acr_name = "acruptimehub${random_string.acr_suffix.result}"
 }
 
+module "appgateway" {
+  source = "../../modules/appgateway"
+
+  resource_group_name = azurerm_resource_group.uptimehub.name
+  location            = azurerm_resource_group.uptimehub.location
+  environment         = "dev"
+
+  name      = "agw-uptimehub-dev"
+  subnet_id = module.networking.appgateway_subnet_id
+}
+
 module "aks" {
   source = "../../modules/aks"
 
@@ -82,8 +91,9 @@ module "aks" {
   location            = azurerm_resource_group.uptimehub.location
   environment         = "dev"
 
-  aks_subnet_id = module.networking.aks_subnet_id
-  acr_id        = module.acr.id
+  aks_subnet_id          = module.networking.aks_subnet_id
+  acr_id                 = module.acr.id
+  application_gateway_id = module.appgateway.id
 
   node_count   = 1
   node_vm_size = "Standard_D2s_v5"
@@ -116,6 +126,7 @@ module "redis" {
 
   redis_name = "redis-uptimehub-dev"
 }
+
 resource "azurerm_private_dns_zone" "redis" {
   name                = "privatelink.redis.azure.net"
   resource_group_name = azurerm_resource_group.uptimehub.name
@@ -175,6 +186,26 @@ module "keyvault" {
   aks_oidc_issuer_url = module.aks.oidc_issuer_url
 }
 
+resource "azurerm_private_dns_zone" "keyvault" {
+  name                = "privatelink.vaultcore.azure.net"
+  resource_group_name = azurerm_resource_group.uptimehub.name
+
+  tags = {
+    project     = "UptimeHub"
+    environment = "dev"
+    managed_by  = "Terraform"
+  }
+}
+
+resource "azurerm_private_dns_zone_virtual_network_link" "keyvault" {
+  name                  = "link-uptimehub-dev-keyvault"
+  resource_group_name   = azurerm_resource_group.uptimehub.name
+  private_dns_zone_name = azurerm_private_dns_zone.keyvault.name
+  virtual_network_id    = module.networking.vnet_id
+
+  registration_enabled = false
+}
+
 resource "azurerm_private_endpoint" "keyvault" {
   name                = "pe-kv-uptimehub-dev"
   location            = azurerm_resource_group.uptimehub.location
@@ -201,54 +232,4 @@ resource "azurerm_private_endpoint" "keyvault" {
     environment = "dev"
     managed_by  = "Terraform"
   }
-}
-
-
-resource "azurerm_private_dns_zone" "keyvault" {
-  name                = "privatelink.vaultcore.azure.net"
-  resource_group_name = azurerm_resource_group.uptimehub.name
-
-  tags = {
-    project     = "UptimeHub"
-    environment = "dev"
-    managed_by  = "Terraform"
-  }
-}
-
-resource "azurerm_private_dns_zone_virtual_network_link" "keyvault" {
-  name                  = "link-uptimehub-dev-keyvault"
-  resource_group_name   = azurerm_resource_group.uptimehub.name
-  private_dns_zone_name = azurerm_private_dns_zone.keyvault.name
-  virtual_network_id    = module.networking.vnet_id
-
-  registration_enabled = false
-}
-
-module "appgateway" {
-  source = "../../modules/appgateway"
-
-  resource_group_name = azurerm_resource_group.uptimehub.name
-  location            = azurerm_resource_group.uptimehub.location
-  environment         = "dev"
-
-  name      = "agw-uptimehub-dev"
-  subnet_id = module.networking.appgateway_subnet_id
-}
-
-resource "azurerm_user_assigned_identity" "agic" {
-  name                = "id-uptimehub-agic-dev"
-  location            = azurerm_resource_group.uptimehub.location
-  resource_group_name = azurerm_resource_group.uptimehub.name
-
-  tags = {
-    project     = "UptimeHub"
-    environment = "dev"
-    managed_by  = "Terraform"
-  }
-}
-
-resource "azurerm_role_assignment" "agic_contributor" {
-  scope                = module.appgateway.id
-  role_definition_name = "Contributor"
-  principal_id         = azurerm_user_assigned_identity.agic.principal_id
 }

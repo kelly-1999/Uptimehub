@@ -1,15 +1,11 @@
 resource "azurerm_kubernetes_cluster" "this" {
-  key_vault_secrets_provider {
-    secret_rotation_enabled  = true
-    secret_rotation_interval = "2m"
-  }
+  name                = "aks-uptimehub-${var.environment}"
+  location            = var.location
+  resource_group_name = var.resource_group_name
+  dns_prefix          = "uptimehub-${var.environment}"
 
   oidc_issuer_enabled       = true
   workload_identity_enabled = true
-  name                      = "aks-uptimehub-${var.environment}"
-  location                  = var.location
-  resource_group_name       = var.resource_group_name
-  dns_prefix                = "uptimehub-${var.environment}"
 
   identity {
     type = "SystemAssigned"
@@ -29,8 +25,6 @@ resource "azurerm_kubernetes_cluster" "this" {
       max_surge                     = "10%"
       node_soak_duration_in_minutes = 0
     }
-
-
   }
 
   network_profile {
@@ -41,6 +35,15 @@ resource "azurerm_kubernetes_cluster" "this" {
   }
 
   role_based_access_control_enabled = true
+
+  key_vault_secrets_provider {
+    secret_rotation_enabled  = true
+    secret_rotation_interval = "2m"
+  }
+
+  ingress_application_gateway {
+    gateway_id = var.application_gateway_id
+  }
 
   tags = {
     project     = "UptimeHub"
