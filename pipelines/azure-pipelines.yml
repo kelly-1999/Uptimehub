@@ -47,7 +47,11 @@ stages:
         pytest -v
       workingDirectory: 'application/backend'
       displayName: 'Run backend tests'
-
+      env:
+        DATABASE_URL: 'postgresql+psycopg://uptimehub:uptimehub@localhost:5432/uptimehub_test'
+        REDIS_URL: 'redis://localhost:6379/0'
+        ENVIRONMENT: 'test'
+        DEBUG: 'false'
 
 # =========================================================
 # 2. BUILD + PUSH
