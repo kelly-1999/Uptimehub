@@ -38,6 +38,8 @@ stages:
       displayName: 'Use Python 3.14'
 
     - script: |
+        set -euo pipefail
+
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         pip install -r requirements-dev.txt
@@ -45,9 +47,12 @@ stages:
       displayName: 'Install dependencies'
 
     - script: |
+        set -euo pipefail
+
         pytest -v
       workingDirectory: 'application/backend'
       displayName: 'Run backend tests'
+
       env:
         DATABASE_URL: 'postgresql+psycopg://uptimehub:uptimehub@localhost:5432/uptimehub_test'
         REDIS_URL: 'redis://localhost:6379/0'
@@ -56,11 +61,72 @@ stages:
 
 
 # =========================================================
-# 2. BUILD + PUSH
+# 2. SECURITY SCAN
+# =========================================================
+- stage: Security
+  displayName: 'Security Scan'
+  dependsOn: Test
+  condition: succeeded()
+
+  jobs:
+  - job: RepositorySecurity
+    displayName: 'Repository Security Scan'
+
+    steps:
+    - checkout: self
+
+    - script: |
+        set -euo pipefail
+
+        echo "Installing Trivy..."
+
+        sudo apt-get update
+        sudo apt-get install -y wget gnupg lsb-release
+
+        wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key \
+          | gpg --dearmor \
+          | sudo tee /usr/share/keyrings/trivy.gpg > /dev/null
+
+        echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb generic main" \
+          | sudo tee /etc/apt/sources.list.d/trivy.list
+
+        sudo apt-get update
+        sudo apt-get install -y trivy
+
+        trivy --version
+      displayName: 'Install Trivy'
+
+    - script: |
+        set -euo pipefail
+
+        echo "Scanning repository dependencies and files..."
+
+        trivy fs \
+          --scanners vuln \
+          --severity HIGH,CRITICAL \
+          --ignore-unfixed \
+          --exit-code 1 \
+          .
+      displayName: 'Scan dependencies'
+
+    - script: |
+        set -euo pipefail
+
+        echo "Scanning Terraform, Kubernetes and Docker configuration..."
+
+        trivy config \
+          --severity HIGH,CRITICAL \
+          --exit-code 1 \
+          infrastructure/terraform kubernetes application/backend/Dockerfile
+      displayName: 'Scan IaC and configuration'
+
+
+# =========================================================
+# 3. BUILD + PUSH
 # =========================================================
 - stage: Build
   displayName: 'Build and Push Image'
-  dependsOn: Test
+  dependsOn: Security
   condition: succeeded()
 
   jobs:
@@ -108,11 +174,82 @@ stages:
 
 
 # =========================================================
-# 3. DEPLOY
+# 4. CONTAINER IMAGE SECURITY
+# =========================================================
+- stage: ContainerSecurity
+  displayName: 'Container Security Scan'
+  dependsOn: Build
+  condition: succeeded()
+
+  variables:
+    acrLoginServer: $[ stageDependencies.Build.DockerBuild.outputs['buildImage.acrLoginServer'] ]
+
+  jobs:
+  - job: ContainerScan
+    displayName: 'Scan Docker Image'
+
+    steps:
+    - script: |
+        set -euo pipefail
+
+        echo "Installing Trivy..."
+
+        sudo apt-get update
+        sudo apt-get install -y wget gnupg lsb-release
+
+        wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key \
+          | gpg --dearmor \
+          | sudo tee /usr/share/keyrings/trivy.gpg > /dev/null
+
+        echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb generic main" \
+          | sudo tee /etc/apt/sources.list.d/trivy.list
+
+        sudo apt-get update
+        sudo apt-get install -y trivy
+
+        trivy --version
+      displayName: 'Install Trivy'
+
+    - task: AzureCLI@2
+      displayName: 'Scan container image'
+
+      inputs:
+        azureSubscription: '$(azureServiceConnection)'
+        scriptType: bash
+        scriptLocation: inlineScript
+
+        inlineScript: |
+          set -euo pipefail
+
+          ACR_NAME=$(echo "$(acrLoginServer)" | cut -d'.' -f1)
+
+          IMAGE="$(acrLoginServer)/$(imageRepository):$(imageTag)"
+
+          echo "Authenticating to ACR..."
+
+          az acr login --name "$ACR_NAME"
+
+          echo "Pulling image for security scan..."
+
+          docker pull "$IMAGE"
+
+          echo "Scanning container image..."
+
+          trivy image \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --exit-code 1 \
+            "$IMAGE"
+
+
+# =========================================================
+# 5. DEPLOY
 # =========================================================
 - stage: Deploy
   displayName: 'Deploy to AKS'
-  dependsOn: Build
+  dependsOn:
+    - Build
+    - ContainerSecurity
   condition: succeeded()
 
   variables:
@@ -165,7 +302,6 @@ stages:
 
                 # -------------------------------------------------
                 # Build manifests using THIS pipeline image.
-                #
                 # Nothing is applied yet.
                 # -------------------------------------------------
                 mkdir -p /tmp/uptimehub-k8s
@@ -225,7 +361,7 @@ stages:
 
 
 # =========================================================
-# 4. SMOKE TEST
+# 6. SMOKE TEST
 # =========================================================
 - stage: SmokeTest
   displayName: 'Smoke Test'
