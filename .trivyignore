@@ -1,0 +1,15 @@
+# UptimeHub development exception
+#
+# AZU-0012:
+# The Terraform remote-state storage account currently uses its public
+# endpoint because the development Terraform pipeline runs on Microsoft-
+# hosted Azure DevOps agents.
+#
+# Access to Terraform state is still protected by Azure AD/RBAC,
+# the blob container is private, TLS 1.2+ is required, and blob
+# versioning is enabled.
+#
+# Production hardening:
+# Move Terraform state access behind private networking with an
+# appropriately networked agent, then remove this exception.
+AZU-0012
