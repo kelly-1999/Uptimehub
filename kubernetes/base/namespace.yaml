@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: uptimehub-dev
+  labels:
+    app.kubernetes.io/part-of: uptimehub
+    environment: dev

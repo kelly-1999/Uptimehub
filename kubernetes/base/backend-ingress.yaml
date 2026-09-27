@@ -1,0 +1,22 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: uptimehub-backend
+  namespace: uptimehub-dev
+  annotations:
+    appgw.ingress.kubernetes.io/health-probe-path: /health
+    appgw.ingress.kubernetes.io/health-probe-status-codes: "200-399"
+
+spec:
+  ingressClassName: azure-application-gateway
+
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: uptimehub-backend
+                port:
+                  number: 80

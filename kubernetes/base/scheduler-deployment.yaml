@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: uptimehub-scheduler
+  namespace: uptimehub-dev
+spec:
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: uptimehub-scheduler
+
+  template:
+    metadata:
+      labels:
+        app: uptimehub-scheduler
+        azure.workload.identity/use: "true"
+
+    spec:
+      serviceAccountName: uptimehub-app
+
+      containers:
+        - name: scheduler
+          image: acruptimehubx51qfz.azurecr.io/uptimehub-backend:0.1.1
+          imagePullPolicy: IfNotPresent
+
+          command:
+            - python
+            - -m
+            - app.services.monitor_scheduler
+
+          envFrom:
+            - configMapRef:
+                name: uptimehub-config
+
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: uptimehub-secrets
+                  key: DATABASE_URL
+
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: uptimehub-secrets
+                  key: REDIS_URL
+
+          ports:
+            - name: metrics
+              containerPort: 9102
+
+          volumeMounts:
+            - name: keyvault-secrets
+              mountPath: /mnt/secrets-store
+              readOnly: true
+
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
+
+      volumes:
+        - name: keyvault-secrets
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: uptimehub-keyvault

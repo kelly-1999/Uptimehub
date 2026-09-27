@@ -1,0 +1,17 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: uptimehub-backend-ingress
+  namespace: uptimehub-dev
+spec:
+  podSelector:
+    matchLabels:
+      app: uptimehub-backend
+
+  policyTypes:
+    - Ingress
+
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 8000

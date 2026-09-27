@@ -19,7 +19,7 @@ config = context.config
 # instead of hardcoding the database connection in alembic.ini.
 config.set_main_option(
     "sqlalchemy.url",
-    settings.database_url,
+    settings.database_url.replace("%", "%%"),
 )
 
 

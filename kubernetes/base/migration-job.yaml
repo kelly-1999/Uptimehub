@@ -1,0 +1,55 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: uptimehub-db-migration
+  namespace: uptimehub-dev
+spec:
+  backoffLimit: 3
+
+  template:
+    metadata:
+      labels:
+        app: uptimehub-db-migration
+        azure.workload.identity/use: "true"
+
+    spec:
+      restartPolicy: Never
+      serviceAccountName: uptimehub-app
+
+      containers:
+        - name: migration
+          image: acruptimehubx51qfz.azurecr.io/uptimehub-backend:0.1.1
+          imagePullPolicy: IfNotPresent
+
+          command:
+            - alembic
+            - upgrade
+            - head
+
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: uptimehub-secrets
+                  key: DATABASE_URL
+
+          volumeMounts:
+            - name: keyvault-secrets
+              mountPath: /mnt/secrets-store
+              readOnly: true
+
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
+
+      volumes:
+        - name: keyvault-secrets
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: uptimehub-keyvault

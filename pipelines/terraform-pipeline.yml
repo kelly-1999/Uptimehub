@@ -1,0 +1,296 @@
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - infrastructure/terraform/**
+
+pr:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - infrastructure/terraform/**
+
+variables:
+- group: uptimehub-terraform-dev
+
+- name: azureServiceConnection
+  value: 'uptimehub-azure-dev'
+
+- name: terraformVersion
+  value: '1.16.2'
+
+- name: terraformDirectory
+  value: 'infrastructure/terraform/environments/dev'
+
+- name: terraformPlan
+  value: 'uptimehub-dev.tfplan'
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+
+# =========================================================
+# 1. TERRAFORM VALIDATE
+# =========================================================
+stages:
+
+- stage: Validate
+  displayName: 'Terraform Validate'
+
+  jobs:
+  - job: TerraformValidate
+    displayName: 'Validate Infrastructure'
+
+    steps:
+    - checkout: self
+
+    - script: |
+        set -euo pipefail
+
+        TERRAFORM_VERSION="$(terraformVersion)"
+
+        curl -fsSLo terraform.zip \
+          "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
+
+        unzip -q terraform.zip
+
+        sudo install terraform /usr/local/bin/terraform
+
+        terraform version
+      displayName: 'Install Terraform'
+
+    - script: |
+        set -euo pipefail
+
+        terraform fmt -check -recursive
+      workingDirectory: 'infrastructure/terraform'
+      displayName: 'Terraform Format Check'
+
+    - task: AzureCLI@2
+      displayName: 'Terraform Init and Validate'
+
+      inputs:
+        azureSubscription: '$(azureServiceConnection)'
+        scriptType: bash
+        scriptLocation: inlineScript
+        addSpnToEnvironment: true
+
+        inlineScript: |
+          set -euo pipefail
+
+          export ARM_CLIENT_ID="$servicePrincipalId"
+          export ARM_TENANT_ID="$tenantId"
+          export ARM_SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
+          export ARM_USE_OIDC=true
+          export ARM_OIDC_TOKEN="$idToken"
+
+          terraform init \
+            -backend-config=backend.hcl \
+            -input=false
+
+          terraform validate
+
+        workingDirectory: '$(terraformDirectory)'
+
+
+# =========================================================
+# 2. TERRAFORM SECURITY SCAN
+# =========================================================
+
+- stage: Security
+  displayName: 'Terraform Security Scan'
+  dependsOn: Validate
+  condition: succeeded()
+
+  jobs:
+  - job: TerraformSecurity
+    displayName: 'Scan Terraform Configuration'
+
+    steps:
+    - checkout: self
+
+    - script: |
+        set -euo pipefail
+
+        echo "Installing Trivy..."
+
+        sudo apt-get update
+        sudo apt-get install -y wget gnupg lsb-release
+
+        wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key \
+          | gpg --dearmor \
+          | sudo tee /usr/share/keyrings/trivy.gpg > /dev/null
+
+        echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb generic main" \
+          | sudo tee /etc/apt/sources.list.d/trivy.list
+
+        sudo apt-get update
+        sudo apt-get install -y trivy
+
+        trivy --version
+      displayName: 'Install Trivy'
+
+    - script: |
+        set -euo pipefail
+
+        echo "Scanning Terraform configuration for HIGH and CRITICAL security issues..."
+
+        trivy config \
+          --severity HIGH,CRITICAL \
+          --ignorefile .trivyignore \
+          --exit-code 1 \
+          infrastructure/terraform
+
+        echo "Terraform security scan passed."
+      displayName: 'Scan Terraform IaC'
+
+
+# =========================================================
+# 3. TERRAFORM PLAN
+# =========================================================
+
+- stage: Plan
+  displayName: 'Terraform Plan'
+  dependsOn: Security
+  condition: succeeded()
+
+  jobs:
+  - job: TerraformPlan
+    displayName: 'Plan Infrastructure Changes'
+
+    steps:
+    - checkout: self
+
+    - script: |
+        set -euo pipefail
+
+        TERRAFORM_VERSION="$(terraformVersion)"
+
+        curl -fsSLo terraform.zip \
+          "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
+
+        unzip -q terraform.zip
+
+        sudo install terraform /usr/local/bin/terraform
+
+        terraform version
+      displayName: 'Install Terraform'
+
+    - task: AzureCLI@2
+      displayName: 'Create Terraform Plan'
+
+      env:
+        TF_VAR_postgresql_admin_password: $(TF_VAR_postgresql_admin_password)
+
+      inputs:
+        azureSubscription: '$(azureServiceConnection)'
+        scriptType: bash
+        scriptLocation: inlineScript
+        addSpnToEnvironment: true
+
+        inlineScript: |
+          set -euo pipefail
+
+          export ARM_CLIENT_ID="$servicePrincipalId"
+          export ARM_TENANT_ID="$tenantId"
+          export ARM_SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
+          export ARM_USE_OIDC=true
+          export ARM_OIDC_TOKEN="$idToken"
+
+          terraform init \
+            -backend-config=backend.hcl \
+            -input=false
+
+          terraform plan \
+            -input=false \
+            -out="$(terraformPlan)"
+
+        workingDirectory: '$(terraformDirectory)'
+
+    - task: PublishPipelineArtifact@1
+      displayName: 'Publish Terraform Plan'
+
+      inputs:
+        targetPath: '$(terraformDirectory)/$(terraformPlan)'
+        artifact: 'terraform-plan'
+
+
+# =========================================================
+# 4. APPROVAL + TERRAFORM APPLY
+# =========================================================
+
+- stage: Apply
+  displayName: 'Terraform Apply'
+  dependsOn: Plan
+  condition: succeeded()
+
+  jobs:
+  - deployment: TerraformApply
+    displayName: 'Apply Infrastructure Changes'
+
+    environment: 'uptimehub-infrastructure-dev'
+
+    strategy:
+      runOnce:
+        deploy:
+
+          steps:
+          - checkout: self
+
+          - task: DownloadPipelineArtifact@2
+            displayName: 'Download Terraform Plan'
+
+            inputs:
+              artifact: 'terraform-plan'
+              path: '$(Pipeline.Workspace)/terraform-plan'
+
+          - script: |
+              set -euo pipefail
+
+              TERRAFORM_VERSION="$(terraformVersion)"
+
+              curl -fsSLo terraform.zip \
+                "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
+
+              unzip -q terraform.zip
+
+              sudo install terraform /usr/local/bin/terraform
+
+              terraform version
+            displayName: 'Install Terraform'
+
+          - task: AzureCLI@2
+            displayName: 'Apply Terraform Plan'
+
+            env:
+              TF_VAR_postgresql_admin_password: $(TF_VAR_postgresql_admin_password)
+
+            inputs:
+              azureSubscription: '$(azureServiceConnection)'
+              scriptType: bash
+              scriptLocation: inlineScript
+              addSpnToEnvironment: true
+
+              inlineScript: |
+                set -euo pipefail
+
+                export ARM_CLIENT_ID="$servicePrincipalId"
+                export ARM_TENANT_ID="$tenantId"
+                export ARM_SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
+                export ARM_USE_OIDC=true
+                export ARM_OIDC_TOKEN="$idToken"
+
+                terraform init \
+                  -backend-config=backend.hcl \
+                  -input=false
+
+                terraform apply \
+                  -input=false \
+                  -auto-approve \
+                  "$(Pipeline.Workspace)/terraform-plan/$(terraformPlan)"
+
+              workingDirectory: '$(terraformDirectory)'
